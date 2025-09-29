@@ -1,0 +1,5 @@
+{
+  "name": "Gerçek Zamanlı Test Sonuçları Platformu",
+  "description": "Firebase ve React tabanlı, anlık veri senkronizasyonuna sahip test sonuçları takip platformu. Kullanıcılar kayıt olabilir, giriş yapabilir ve test sonuçlarını ekleyebilir. Tüm veriler anlık olarak tüm kullanıcılara yansır.",
+  "requestFramePermissions": []
+}

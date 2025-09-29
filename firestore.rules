@@ -1,0 +1,100 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isAuthed() {
+      return request.auth != null;
+    }
+
+    function isOwnerCreate(data) {
+      return data.kullaniciId == request.auth.uid;
+    }
+
+    function isOwnerResource() {
+      return resource.data.kullaniciId == request.auth.uid;
+    }
+
+    function isString(x) { return x is string; }
+    function isNumber(x) { return x is int || x is float; }
+    function isTimestamp(x) { return x is timestamp; }
+
+    // 0..50 clamp validation
+    function validScore(n) { return isNumber(n) && n >= 0 && n <= 50; }
+
+    function validTopics(topics) {
+      // Firestore Rules dilinde liste üzerinde her bir elemanı doğrulamak için güvenilir bir iterasyon desteği yok.
+      // Bu nedenle temel kontrol yapıyoruz: null ya da en fazla 10 elemanlı bir liste olmalı.
+      return topics == null || (topics is list && topics.size() <= 10);
+    }
+
+    function validResult(data) {
+      return isString(data.dersAdi) && data.dersAdi.size() > 0 && data.dersAdi.size() <= 100
+        && validScore(data.dogruSayisi)
+        && validScore(data.yanlisSayisi)
+        && validScore(data.bosSayisi)
+        && isString(data.kullaniciId)
+        && isString(data.kullaniciEmail)
+        && (isTimestamp(data.createdAt) || (data.createdAt == null))
+        && validTopics(data.topics);
+    }
+
+    // 'testSonuclari' koleksiyonu için kurallar
+    match /testSonuclari/{resultId} {
+      // Okuma: tüm giriş yapmış kullanıcılar okul geneli görünüm için okuyabilir
+      allow read: if isAuthed();
+
+      // Oluşturma: sadece kendi adına ve validResult
+      allow create: if isAuthed() && isOwnerCreate(request.resource.data) && validResult(request.resource.data);
+
+      // Güncelleme/Silme: sadece sahibi ve validResult
+      allow update: if isAuthed() && isOwnerResource() && validResult(request.resource.data);
+      allow delete: if isAuthed() && isOwnerResource();
+    }
+
+    // Hata defteri (mistakes) koleksiyonu
+    function validMistake(data) {
+      return isString(data.kullaniciId)
+        && isString(data.dersAdi) && data.dersAdi.size() > 0 && data.dersAdi.size() <= 100
+        && validTopics(data.topics)
+        && (data.note == null || (isString(data.note) && data.note.size() <= 500))
+        && (data.imageUrl == null || isString(data.imageUrl))
+        && (data.testResultId == null || isString(data.testResultId))
+        && (data.nextReviewAt == null || isTimestamp(data.nextReviewAt))
+        && (
+          isString(data.status) &&
+          (data.status == 'open' || data.status == 'reviewed' || data.status == 'archived')
+        )
+        && (isTimestamp(data.createdAt) || data.createdAt == null);
+    }
+
+    match /mistakes/{mistakeId} {
+      // Yalnızca sahibi görebilir
+      allow read: if isAuthed() && isOwnerResource();
+      allow create: if isAuthed() && isOwnerCreate(request.resource.data) && validMistake(request.resource.data);
+      allow update: if isAuthed() && isOwnerResource() && validMistake(request.resource.data);
+      allow delete: if isAuthed() && isOwnerResource();
+    }
+
+    // Exams (LGS denemeleri)
+    function validExamBranch(b) {
+      return b != null && validScore(b.dogru) && validScore(b.yanlis) && validScore(b.bos);
+    }
+    function validExam(data) {
+      return isString(data.kullaniciId)
+        && (isTimestamp(data.createdAt) || data.createdAt == null)
+        && (data.ad == null || isString(data.ad))
+        && (data.yayin == null || isString(data.yayin))
+        && validExamBranch(data.turkce)
+        && validExamBranch(data.matematik)
+        && validExamBranch(data.fen)
+        && validExamBranch(data.inkilap)
+        && validExamBranch(data.din)
+        && validExamBranch(data.ingilizce);
+    }
+    match /exams/{examId} {
+      allow read: if isAuthed();
+      allow create: if isAuthed() && isOwnerCreate(request.resource.data) && validExam(request.resource.data);
+      allow update: if isAuthed() && isOwnerResource() && validExam(request.resource.data);
+      allow delete: if isAuthed() && isOwnerResource();
+    }
+  }
+}
