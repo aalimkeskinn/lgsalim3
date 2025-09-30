@@ -14,6 +14,9 @@ import TrashIcon from './icons/TrashIcon';
 import ChartBarIcon from './icons/ChartBarIcon';
 import BookOpenIcon from './icons/BookOpenIcon';
 import CalendarIcon from './icons/CalendarIcon';
+import ExpandIcon from './icons/ExpandIcon';
+import ChartModal from './ChartModal';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar, Legend } from 'recharts';
 
 interface ExamsPageProps {
   user: User;
@@ -28,6 +31,8 @@ const ExamsPage: React.FC<ExamsPageProps> = ({ user }) => {
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
   const [sortBy, setSortBy] = useState<'date' | 'totalNet'>('date');
   const [filterPeriod, setFilterPeriod] = useState<'all' | '30' | '7'>('all');
+  const [isChartModalOpen, setIsChartModalOpen] = useState(false);
+  const [modalChart, setModalChart] = useState<React.ReactNode>(null);
 
   // Subscribe to user's exams
   useEffect(() => {
@@ -166,6 +171,91 @@ const ExamsPage: React.FC<ExamsPageProps> = ({ user }) => {
     return { totalExams, avgNet, bestNet, improvement };
   }, [exams]);
 
+  // Chart data preparation
+  const progressChartData = useMemo(() => {
+    return filteredAndSortedExams.slice().reverse().map((exam, index) => {
+      const examDate = exam.createdAt ? (exam.createdAt.toDate ? exam.createdAt.toDate() : new Date(exam.createdAt)) : null;
+      return {
+        name: examDate ? examDate.toLocaleDateString('tr-TR', { day: '2-digit', month: '2-digit' }) : `Deneme ${index + 1}`,
+        'Toplam Net': calculateTotalNet(exam),
+        'Türkçe': Math.max(0, exam.turkce.dogru - exam.turkce.yanlis / 3),
+        'Matematik': Math.max(0, exam.matematik.dogru - exam.matematik.yanlis / 3),
+        'Fen': Math.max(0, exam.fen.dogru - exam.fen.yanlis / 3),
+      };
+    });
+  }, [filteredAndSortedExams]);
+
+  const branchComparisonData = useMemo(() => {
+    if (exams.length === 0) return [];
+    
+    const branches = ['Türkçe', 'Matematik', 'Fen Bilimleri', 'T.C. İnkılap', 'Din Kültürü', 'Yabancı Dil'];
+    return branches.map(branch => {
+      const branchKey = branch === 'Türkçe' ? 'turkce' : 
+                       branch === 'Matematik' ? 'matematik' :
+                       branch === 'Fen Bilimleri' ? 'fen' :
+                       branch === 'T.C. İnkılap' ? 'inkilap' :
+                       branch === 'Din Kültürü' ? 'din' : 'ingilizce';
+      
+      const avgNet = exams.reduce((sum, exam) => {
+        const branchData = exam[branchKey as keyof ExamResult] as any;
+        return sum + Math.max(0, branchData.dogru - branchData.yanlis / 3);
+      }, 0) / exams.length;
+
+      const maxPossible = branch === 'Türkçe' || branch === 'Matematik' || branch === 'Fen Bilimleri' ? 20 : 10;
+      
+      return {
+        branch,
+        'Ortalama Net': avgNet,
+        'Başarı %': (avgNet / maxPossible) * 100,
+      };
+    });
+  }, [exams]);
+
+  const radarChartData = useMemo(() => {
+    if (exams.length === 0) return [];
+    
+    const latest = exams[0];
+    if (!latest) return [];
+
+    return [
+      {
+        subject: 'Türkçe',
+        net: Math.max(0, latest.turkce.dogru - latest.turkce.yanlis / 3),
+        fullMark: 20,
+      },
+      {
+        subject: 'Matematik',
+        net: Math.max(0, latest.matematik.dogru - latest.matematik.yanlis / 3),
+        fullMark: 20,
+      },
+      {
+        subject: 'Fen',
+        net: Math.max(0, latest.fen.dogru - latest.fen.yanlis / 3),
+        fullMark: 20,
+      },
+      {
+        subject: 'İnkılap',
+        net: Math.max(0, latest.inkilap.dogru - latest.inkilap.yanlis / 3),
+        fullMark: 10,
+      },
+      {
+        subject: 'Din',
+        net: Math.max(0, latest.din.dogru - latest.din.yanlis / 3),
+        fullMark: 10,
+      },
+      {
+        subject: 'İngilizce',
+        net: Math.max(0, latest.ingilizce.dogru - latest.ingilizce.yanlis / 3),
+        fullMark: 10,
+      },
+    ];
+  }, [exams]);
+
+  const openChartModal = (chart: React.ReactNode) => {
+    setModalChart(chart);
+    setIsChartModalOpen(true);
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-50">
@@ -181,248 +271,281 @@ const ExamsPage: React.FC<ExamsPageProps> = ({ user }) => {
     <div className="min-h-screen bg-gray-50">
       <Header user={user} onLogout={() => signOut(auth)} />
       
-      <main className="container mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-6">
-        {/* Page Header */}
-        <div className="mb-8">
-          <div className="flex items-center justify-between">
-            <div>
-              <h1 className="text-3xl font-bold text-gray-900 flex items-center gap-3">
-                <div className="p-3 bg-gradient-to-br from-blue-500 to-purple-600 rounded-xl text-white shadow-lg">
-                  <ChartBarIcon />
-                </div>
-                LGS Deneme Sınavları
-              </h1>
-              <p className="mt-2 text-gray-600">Deneme sınavı sonuçlarınızı takip edin ve gelişiminizi analiz edin</p>
-            </div>
-            <div className="flex items-center gap-3">
-              <a 
-                href="#dashboard" 
-                className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
-              >
-                ← Ana Panel
-              </a>
-              <button
-                onClick={() => setIsAddModalOpen(true)}
-                className="inline-flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-blue-600 to-purple-600 text-white font-semibold rounded-lg hover:from-blue-700 hover:to-purple-700 transition-all duration-200 shadow-lg hover:shadow-xl transform hover:-translate-y-0.5"
-              >
-                <PlusIcon />
-                Yeni Deneme Ekle
-              </button>
-            </div>
+      <main className="container mx-auto max-w-7xl px-3 sm:px-4 lg:px-6 py-3">
+        {/* Compact Header */}
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <h1 className="text-lg font-bold text-gray-900">LGS Deneme Sınavları</h1>
+            <p className="text-xs text-gray-500">Deneme sonuçlarınızı takip edin</p>
+          </div>
+          <div className="flex items-center gap-2">
+            <a href="#dashboard" className="text-xs text-emerald-700 hover:underline">← Panel</a>
+            <button
+              onClick={() => setIsAddModalOpen(true)}
+              className="flex items-center gap-1 bg-emerald-600 hover:bg-emerald-700 text-white font-medium py-1 px-2.5 rounded-md text-xs"
+            >
+              <PlusIcon />
+              Yeni Deneme
+            </button>
           </div>
         </div>
 
-        {/* Statistics Cards */}
+        {/* Compact Statistics */}
         {exams.length > 0 && (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-            <div className="bg-white rounded-xl p-6 shadow-sm border border-gray-100 hover:shadow-md transition-shadow">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-gray-600">Toplam Deneme</p>
-                  <p className="text-3xl font-bold text-gray-900 mt-1">{stats.totalExams}</p>
-                </div>
-                <div className="p-3 bg-blue-50 rounded-lg">
-                  <BookOpenIcon className="h-6 w-6 text-blue-600" />
-                </div>
-              </div>
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 mb-4">
+            <div className="bg-white rounded-lg p-2.5 border border-gray-200 shadow-sm">
+              <p className="text-[10px] text-gray-500 uppercase">Toplam</p>
+              <p className="text-lg font-bold text-gray-900">{stats.totalExams}</p>
             </div>
-
-            <div className="bg-white rounded-xl p-6 shadow-sm border border-gray-100 hover:shadow-md transition-shadow">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-gray-600">Ortalama Net</p>
-                  <p className="text-3xl font-bold text-gray-900 mt-1">{stats.avgNet.toFixed(1)}</p>
-                </div>
-                <div className="p-3 bg-green-50 rounded-lg">
-                  <ChartBarIcon className="h-6 w-6 text-green-600" />
-                </div>
-              </div>
+            <div className="bg-white rounded-lg p-2.5 border border-gray-200 shadow-sm">
+              <p className="text-[10px] text-gray-500 uppercase">Ortalama</p>
+              <p className="text-lg font-bold text-emerald-600">{stats.avgNet.toFixed(1)}</p>
             </div>
-
-            <div className="bg-white rounded-xl p-6 shadow-sm border border-gray-100 hover:shadow-md transition-shadow">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-gray-600">En Yüksek Net</p>
-                  <p className="text-3xl font-bold text-gray-900 mt-1">{stats.bestNet.toFixed(1)}</p>
-                </div>
-                <div className="p-3 bg-purple-50 rounded-lg">
-                  <svg className="h-6 w-6 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
-                  </svg>
-                </div>
-              </div>
+            <div className="bg-white rounded-lg p-2.5 border border-gray-200 shadow-sm">
+              <p className="text-[10px] text-gray-500 uppercase">En Yüksek</p>
+              <p className="text-lg font-bold text-blue-600">{stats.bestNet.toFixed(1)}</p>
             </div>
-
-            <div className="bg-white rounded-xl p-6 shadow-sm border border-gray-100 hover:shadow-md transition-shadow">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-gray-600">Gelişim</p>
-                  <p className={`text-3xl font-bold mt-1 ${stats.improvement >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                    {stats.improvement >= 0 ? '+' : ''}{stats.improvement.toFixed(1)}
-                  </p>
-                </div>
-                <div className={`p-3 rounded-lg ${stats.improvement >= 0 ? 'bg-green-50' : 'bg-red-50'}`}>
-                  <svg className={`h-6 w-6 ${stats.improvement >= 0 ? 'text-green-600' : 'text-red-600'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={stats.improvement >= 0 ? "M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" : "M13 17h8m0 0V9m0 8l-8-8-4 4-6-6"} />
-                  </svg>
-                </div>
-              </div>
+            <div className="bg-white rounded-lg p-2.5 border border-gray-200 shadow-sm">
+              <p className="text-[10px] text-gray-500 uppercase">Gelişim</p>
+              <p className={`text-lg font-bold ${stats.improvement >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                {stats.improvement >= 0 ? '+' : ''}{stats.improvement.toFixed(1)}
+              </p>
             </div>
           </div>
         )}
 
-        {/* Filters and Controls */}
+        {/* Charts Section */}
         {exams.length > 0 && (
-          <div className="bg-white rounded-xl p-6 shadow-sm border border-gray-100 mb-6">
-            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-              <div className="flex items-center gap-4">
-                <div className="flex items-center gap-2">
-                  <label className="text-sm font-medium text-gray-700">Sıralama:</label>
-                  <select
-                    value={sortBy}
-                    onChange={(e) => setSortBy(e.target.value as 'date' | 'totalNet')}
-                    className="rounded-lg border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-sm"
-                  >
-                    <option value="date">Tarihe Göre</option>
-                    <option value="totalNet">Net Puana Göre</option>
-                  </select>
-                </div>
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 mb-4">
+            {/* Progress Chart */}
+            <div className="bg-white rounded-lg border border-gray-200 shadow-sm p-2">
+              <div className="flex items-center justify-between mb-2">
+                <h3 className="text-xs font-semibold text-gray-900">Net Gelişimi</h3>
+                <button
+                  onClick={() => openChartModal(
+                    <div className="p-4">
+                      <h3 className="text-lg font-semibold mb-4">Net Gelişimi</h3>
+                      <ResponsiveContainer width="100%" height={400}>
+                        <LineChart data={progressChartData}>
+                          <CartesianGrid strokeDasharray="3 3" />
+                          <XAxis dataKey="name" fontSize={12} />
+                          <YAxis fontSize={12} />
+                          <Tooltip />
+                          <Legend />
+                          <Line type="monotone" dataKey="Toplam Net" stroke="#10b981" strokeWidth={2} />
+                          <Line type="monotone" dataKey="Türkçe" stroke="#3b82f6" strokeWidth={1} />
+                          <Line type="monotone" dataKey="Matematik" stroke="#f59e0b" strokeWidth={1} />
+                          <Line type="monotone" dataKey="Fen" stroke="#8b5cf6" strokeWidth={1} />
+                        </LineChart>
+                      </ResponsiveContainer>
+                    </div>
+                  )}
+                  className="p-1 hover:bg-gray-100 rounded"
+                >
+                  <ExpandIcon className="h-3 w-3" />
+                </button>
+              </div>
+              <ResponsiveContainer width="100%" height={120}>
+                <LineChart data={progressChartData}>
+                  <XAxis dataKey="name" fontSize={8} />
+                  <YAxis fontSize={8} />
+                  <Tooltip />
+                  <Line type="monotone" dataKey="Toplam Net" stroke="#10b981" strokeWidth={2} dot={false} />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+
+            {/* Branch Comparison */}
+            <div className="bg-white rounded-lg border border-gray-200 shadow-sm p-2">
+              <div className="flex items-center justify-between mb-2">
+                <h3 className="text-xs font-semibold text-gray-900">Branş Karşılaştırma</h3>
+                <button
+                  onClick={() => openChartModal(
+                    <div className="p-4">
+                      <h3 className="text-lg font-semibold mb-4">Branş Karşılaştırma</h3>
+                      <ResponsiveContainer width="100%" height={400}>
+                        <BarChart data={branchComparisonData}>
+                          <CartesianGrid strokeDasharray="3 3" />
+                          <XAxis dataKey="branch" fontSize={12} angle={-45} textAnchor="end" height={80} />
+                          <YAxis fontSize={12} />
+                          <Tooltip />
+                          <Legend />
+                          <Bar dataKey="Ortalama Net" fill="#3b82f6" />
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
+                  )}
+                  className="p-1 hover:bg-gray-100 rounded"
+                >
+                  <ExpandIcon className="h-3 w-3" />
+                </button>
+              </div>
+              <ResponsiveContainer width="100%" height={120}>
+                <BarChart data={branchComparisonData}>
+                  <XAxis dataKey="branch" fontSize={8} angle={-45} textAnchor="end" height={40} />
+                  <YAxis fontSize={8} />
+                  <Tooltip />
+                  <Bar dataKey="Ortalama Net" fill="#3b82f6" />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+
+            {/* Radar Chart */}
+            <div className="bg-white rounded-lg border border-gray-200 shadow-sm p-2">
+              <div className="flex items-center justify-between mb-2">
+                <h3 className="text-xs font-semibold text-gray-900">Son Deneme Analizi</h3>
+                <button
+                  onClick={() => openChartModal(
+                    <div className="p-4">
+                      <h3 className="text-lg font-semibold mb-4">Son Deneme Analizi</h3>
+                      <ResponsiveContainer width="100%" height={400}>
+                        <RadarChart data={radarChartData}>
+                          <PolarGrid />
+                          <PolarAngleAxis dataKey="subject" fontSize={12} />
+                          <PolarRadiusAxis fontSize={10} />
+                          <Radar name="Net" dataKey="net" stroke="#8884d8" fill="#8884d8" fillOpacity={0.3} />
+                        </RadarChart>
+                      </ResponsiveContainer>
+                    </div>
+                  )}
+                  className="p-1 hover:bg-gray-100 rounded"
+                >
+                  <ExpandIcon className="h-3 w-3" />
+                </button>
+              </div>
+              <ResponsiveContainer width="100%" height={120}>
+                <RadarChart data={radarChartData}>
+                  <PolarGrid />
+                  <PolarAngleAxis dataKey="subject" fontSize={8} />
+                  <Radar name="Net" dataKey="net" stroke="#8884d8" fill="#8884d8" fillOpacity={0.3} />
+                </RadarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+        )}
+
+        {/* Filters */}
+        {exams.length > 0 && (
+          <div className="bg-white rounded-lg p-2.5 border border-gray-200 shadow-sm mb-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <select
+                  value={sortBy}
+                  onChange={(e) => setSortBy(e.target.value as 'date' | 'totalNet')}
+                  className="rounded border-gray-300 bg-white text-xs py-1 px-2"
+                >
+                  <option value="date">Tarihe Göre</option>
+                  <option value="totalNet">Net Puana Göre</option>
+                </select>
                 
-                <div className="flex items-center gap-2">
-                  <label className="text-sm font-medium text-gray-700">Dönem:</label>
-                  <select
-                    value={filterPeriod}
-                    onChange={(e) => setFilterPeriod(e.target.value as 'all' | '30' | '7')}
-                    className="rounded-lg border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-sm"
-                  >
-                    <option value="all">Tüm Zamanlar</option>
-                    <option value="30">Son 30 Gün</option>
-                    <option value="7">Son 7 Gün</option>
-                  </select>
-                </div>
+                <select
+                  value={filterPeriod}
+                  onChange={(e) => setFilterPeriod(e.target.value as 'all' | '30' | '7')}
+                  className="rounded border-gray-300 bg-white text-xs py-1 px-2"
+                >
+                  <option value="all">Tüm Zamanlar</option>
+                  <option value="30">Son 30 Gün</option>
+                  <option value="7">Son 7 Gün</option>
+                </select>
               </div>
               
-              <div className="text-sm text-gray-500">
-                {filteredAndSortedExams.length} deneme gösteriliyor
-              </div>
+              <span className="text-xs text-gray-500">
+                {filteredAndSortedExams.length} deneme
+              </span>
             </div>
           </div>
         )}
 
-        {/* Exams List */}
+        {/* Compact Exams List */}
         {filteredAndSortedExams.length === 0 ? (
-          <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-12 text-center">
-            <div className="max-w-md mx-auto">
-              <div className="p-4 bg-gray-50 rounded-full w-20 h-20 mx-auto mb-6 flex items-center justify-center">
-                <ChartBarIcon className="h-10 w-10 text-gray-400" />
-              </div>
-              <h3 className="text-xl font-semibold text-gray-900 mb-2">Henüz deneme sınavı yok</h3>
-              <p className="text-gray-600 mb-6">
-                {exams.length === 0 
-                  ? "İlk deneme sınavı sonucunuzu ekleyerek başlayın"
-                  : "Seçilen filtrelere uygun deneme bulunamadı"
-                }
-              </p>
-              <button
-                onClick={() => setIsAddModalOpen(true)}
-                className="inline-flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-blue-600 to-purple-600 text-white font-semibold rounded-lg hover:from-blue-700 hover:to-purple-700 transition-all duration-200"
-              >
-                <PlusIcon />
-                İlk Deneme Sınavını Ekle
-              </button>
-            </div>
+          <div className="bg-white rounded-lg border border-gray-200 shadow-sm p-8 text-center">
+            <ChartBarIcon className="h-12 w-12 text-gray-400 mx-auto mb-4" />
+            <h3 className="text-lg font-semibold text-gray-900 mb-2">Henüz deneme sınavı yok</h3>
+            <p className="text-gray-600 mb-4">İlk deneme sınavı sonucunuzu ekleyerek başlayın</p>
+            <button
+              onClick={() => setIsAddModalOpen(true)}
+              className="inline-flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white font-medium rounded-lg hover:bg-emerald-700"
+            >
+              <PlusIcon />
+              İlk Deneme Sınavını Ekle
+            </button>
           </div>
         ) : (
-          <div className="space-y-4">
+          <div className="space-y-2">
             {filteredAndSortedExams.map((exam) => {
               const totalNet = calculateTotalNet(exam);
               const examDate = exam.createdAt ? (exam.createdAt.toDate ? exam.createdAt.toDate() : new Date(exam.createdAt)) : null;
               
               return (
-                <div key={exam.id} className="bg-white rounded-xl shadow-sm border border-gray-100 hover:shadow-md transition-all duration-200 overflow-hidden">
-                  <div className="p-6">
-                    {/* Header */}
-                    <div className="flex items-start justify-between mb-6">
-                      <div className="flex-1">
-                        <div className="flex items-center gap-3 mb-2">
-                          <h3 className="text-lg font-semibold text-gray-900">
-                            {exam.ad || 'Deneme Sınavı'}
-                          </h3>
-                          {exam.yayin && (
-                            <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-blue-50 text-blue-700 border border-blue-200">
-                              {exam.yayin}
-                            </span>
-                          )}
-                        </div>
-                        <div className="flex items-center gap-4 text-sm text-gray-600">
-                          {examDate && (
-                            <div className="flex items-center gap-1">
-                              <CalendarIcon className="h-4 w-4" />
-                              {examDate.toLocaleDateString('tr-TR', { 
-                                day: 'numeric', 
-                                month: 'long', 
-                                year: 'numeric' 
-                              })}
-                            </div>
-                          )}
-                          <div className="flex items-center gap-1">
-                            <ChartBarIcon className="h-4 w-4" />
-                            Toplam Net: <span className="font-semibold text-gray-900">{totalNet.toFixed(2)}</span>
-                          </div>
-                        </div>
+                <div key={exam.id} className="bg-white rounded-lg border border-gray-200 shadow-sm hover:shadow-md transition-shadow p-3">
+                  {/* Compact Header */}
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2 mb-1">
+                        <h3 className="text-sm font-semibold text-gray-900">
+                          {exam.ad || 'Deneme Sınavı'}
+                        </h3>
+                        {exam.yayin && (
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-blue-50 text-blue-700 border border-blue-200">
+                            {exam.yayin}
+                          </span>
+                        )}
                       </div>
-                      
-                      <div className="flex items-center gap-2">
-                        <button
-                          onClick={() => setEditingExam(exam)}
-                          className="p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
-                          title="Düzenle"
-                        >
-                          <EditIcon />
-                        </button>
-                        <button
-                          onClick={() => setConfirmDeleteId(exam.id)}
-                          className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                          title="Sil"
-                        >
-                          <TrashIcon />
-                        </button>
+                      <div className="flex items-center gap-3 text-xs text-gray-600">
+                        {examDate && (
+                          <span>{examDate.toLocaleDateString('tr-TR')}</span>
+                        )}
+                        <span className="font-semibold text-emerald-600">
+                          Toplam Net: {totalNet.toFixed(1)}
+                        </span>
                       </div>
                     </div>
+                    
+                    <div className="flex items-center gap-1">
+                      <button
+                        onClick={() => setEditingExam(exam)}
+                        className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded"
+                      >
+                        <EditIcon />
+                      </button>
+                      <button
+                        onClick={() => setConfirmDeleteId(exam.id)}
+                        className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded"
+                      >
+                        <TrashIcon />
+                      </button>
+                    </div>
+                  </div>
 
-                    {/* Branch Results Grid */}
-                    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
-                      {[
-                        { name: 'Türkçe', data: exam.turkce, color: 'blue' },
-                        { name: 'Matematik', data: exam.matematik, color: 'green' },
-                        { name: 'Fen Bilimleri', data: exam.fen, color: 'purple' },
-                        { name: 'T.C. İnkılap', data: exam.inkilap, color: 'red' },
-                        { name: 'Din Kültürü', data: exam.din, color: 'yellow' },
-                        { name: 'Yabancı Dil', data: exam.ingilizce, color: 'indigo' },
-                      ].map(({ name, data, color }) => {
-                        const net = Math.max(0, data.dogru - data.yanlis / 3);
-                        const total = data.dogru + data.yanlis + data.bos;
-                        const maxQuestions = name === 'Türkçe' || name === 'Matematik' || name === 'Fen Bilimleri' ? 20 : 10;
-                        const successRate = maxQuestions > 0 ? (net / maxQuestions) * 100 : 0;
-                        
-                        return (
-                          <div key={name} className={`bg-${color}-50 rounded-lg p-4 border border-${color}-100`}>
-                            <div className="text-center">
-                              <h4 className={`text-sm font-semibold text-${color}-900 mb-2`}>{name}</h4>
-                              <div className={`text-2xl font-bold text-${color}-700 mb-1`}>
-                                {net.toFixed(1)}
-                              </div>
-                              <div className="text-xs text-gray-600 space-y-1">
-                                <div>D: {data.dogru} Y: {data.yanlis} B: {data.bos}</div>
-                                <div className={`text-${color}-600 font-medium`}>
-                                  %{successRate.toFixed(0)}
-                                </div>
-                              </div>
-                            </div>
+                  {/* Compact Branch Results */}
+                  <div className="grid grid-cols-3 lg:grid-cols-6 gap-2">
+                    {[
+                      { name: 'TÜR', data: exam.turkce, color: 'blue' },
+                      { name: 'MAT', data: exam.matematik, color: 'green' },
+                      { name: 'FEN', data: exam.fen, color: 'purple' },
+                      { name: 'İNK', data: exam.inkilap, color: 'red' },
+                      { name: 'DİN', data: exam.din, color: 'yellow' },
+                      { name: 'İNG', data: exam.ingilizce, color: 'indigo' },
+                    ].map(({ name, data, color }) => {
+                      const net = Math.max(0, data.dogru - data.yanlis / 3);
+                      const maxQuestions = name === 'TÜR' || name === 'MAT' || name === 'FEN' ? 20 : 10;
+                      const successRate = maxQuestions > 0 ? (net / maxQuestions) * 100 : 0;
+                      
+                      return (
+                        <div key={name} className={`bg-${color}-50 rounded p-2 border border-${color}-100 text-center`}>
+                          <div className={`text-xs font-semibold text-${color}-900 mb-1`}>{name}</div>
+                          <div className={`text-lg font-bold text-${color}-700`}>
+                            {net.toFixed(1)}
                           </div>
-                        );
-                      })}
-                    </div>
+                          <div className="text-[10px] text-gray-600">
+                            {data.dogru}-{data.yanlis}-{data.bos}
+                          </div>
+                          <div className={`text-[10px] text-${color}-600 font-medium`}>
+                            %{successRate.toFixed(0)}
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
               );
@@ -458,6 +581,10 @@ const ExamsPage: React.FC<ExamsPageProps> = ({ user }) => {
         onConfirm={confirmDelete}
         onCancel={() => setConfirmDeleteId(null)}
       />
+
+      <ChartModal isOpen={isChartModalOpen} onClose={() => setIsChartModalOpen(false)}>
+        {modalChart}
+      </ChartModal>
 
       {toast && (
         <Toast
