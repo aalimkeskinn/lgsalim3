@@ -3,7 +3,7 @@
 // displays statistics, and provides functionality for adding, updating, and deleting results.
 import React, { useState, useEffect, useMemo } from 'react';
 import { User, signOut } from 'firebase/auth';
-import { collection, addDoc, onSnapshot, query, orderBy, deleteDoc, doc, updateDoc, serverTimestamp, where } from 'firebase/firestore';
+import { collection, addDoc, onSnapshot, query, orderBy, deleteDoc, doc, updateDoc, serverTimestamp, where, Timestamp } from 'firebase/firestore';
 import { auth, db } from '../services/firebase';
 import type { TestResult, MistakeEntry } from '../types';
 import Header from './Header';
@@ -31,6 +31,7 @@ import BadgesBar, { type BadgeKey } from './BadgesBar';
 import ConfirmModal from './ConfirmModal';
 import MistakeModal from './MistakeModal';
 import { getCourseTopics } from '../data/topics';
+import { AreaChart, Area, PieChart, Pie, Cell, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar, ResponsiveContainer } from 'recharts';
 
 interface DashboardProps {
   user: User;
@@ -66,6 +67,17 @@ const Dashboard: React.FC<DashboardProps> = ({ user }) => {
   const [mistakeFilterCourse, setMistakeFilterCourse] = useState<string>('all');
   const [mistakeFilterTopic, setMistakeFilterTopic] = useState<string>('all');
   const [mistakeFilterStatus, setMistakeFilterStatus] = useState<'all' | 'open' | 'reviewed' | 'archived'>('all');
+
+  // AI Insights state
+  const [aiInsights, setAiInsights] = useState<string[]>([]);
+  const [showAiPanel, setShowAiPanel] = useState(false);
+  
+  // Performance tracking
+  const [performanceGoals, setPerformanceGoals] = useState({
+    dailyTests: 2,
+    weeklyTests: 10,
+    targetAccuracy: 85
+  });
 
   // Goals (personalized): daily/weekly targets with localStorage persistence
   const [dailyTarget, setDailyTarget] = useState<number>(() => {
@@ -208,6 +220,52 @@ const Dashboard: React.FC<DashboardProps> = ({ user }) => {
     return out;
   }, [testResults, user.uid, userDailyWeekly]);
 
+  // AI-powered insights generation
+  const generateAiInsights = useMemo(() => {
+    const insights: string[] = [];
+    const userTests = testResults.filter(r => r.kullaniciId === user.uid);
+    
+    if (userTests.length >= 5) {
+      const recent5 = userTests.slice(0, 5);
+      const previous5 = userTests.slice(5, 10);
+      
+      if (previous5.length >= 3) {
+        const recentAvg = recent5.reduce((sum, r) => sum + (r.dogruSayisi - r.yanlisSayisi/4), 0) / recent5.length;
+        const previousAvg = previous5.reduce((sum, r) => sum + (r.dogruSayisi - r.yanlisSayisi/4), 0) / previous5.length;
+        
+        if (recentAvg > previousAvg) {
+          insights.push(`🚀 Harika! Son 5 testinizde %${Math.round(((recentAvg - previousAvg) / previousAvg) * 100)} gelişim gösterdiniz.`);
+        }
+      }
+      
+      // Subject analysis
+      const subjectPerf: Record<string, number[]> = {};
+      recent5.forEach(r => {
+        if (!subjectPerf[r.dersAdi]) subjectPerf[r.dersAdi] = [];
+        subjectPerf[r.dersAdi].push(r.dogruSayisi - r.yanlisSayisi/4);
+      });
+      
+      const weakSubject = Object.entries(subjectPerf)
+        .map(([subject, scores]) => ({ subject, avg: scores.reduce((a,b) => a+b, 0) / scores.length }))
+        .sort((a, b) => a.avg - b.avg)[0];
+        
+      if (weakSubject) {
+        insights.push(`📚 ${weakSubject.subject} dersinde daha fazla çalışma öneriyoruz. Ortalama net: ${weakSubject.avg.toFixed(1)}`);
+      }
+    }
+    
+    // Streak analysis
+    if (userDailyWeekly.weekly >= 5) {
+      insights.push(`🔥 Bu hafta ${userDailyWeekly.weekly} test çözdünüz! Harika bir tempo.`);
+    }
+    
+    return insights;
+  }, [testResults, user.uid, userDailyWeekly]);
+
+  useEffect(() => {
+    setAiInsights(generateAiInsights);
+  }, [generateAiInsights]);
+
   useEffect(() => {
     // detect newly earned badges
     const newly = computedBadges.filter(b => !earnedBadges.includes(b));
@@ -236,6 +294,69 @@ const Dashboard: React.FC<DashboardProps> = ({ user }) => {
     if (userPoints >= 100) return 'orta';
     return 'giris';
   }, [userPoints]);
+
+  // Advanced analytics data
+  const weeklyProgressData = useMemo(() => {
+    const last7Days = Array.from({ length: 7 }, (_, i) => {
+      const date = new Date();
+      date.setDate(date.getDate() - (6 - i));
+      return date;
+    });
+    
+    return last7Days.map(date => {
+      const dayTests = userResults.filter(r => {
+        const testDate = toDateSafe(r.createdAt);
+        return testDate && testDate.toDateString() === date.toDateString();
+      });
+      
+      const avgAccuracy = dayTests.length > 0 
+        ? dayTests.reduce((sum, r) => {
+            const total = r.dogruSayisi + r.yanlisSayisi + r.bosSayisi;
+            return sum + (total > 0 ? (r.dogruSayisi / total) * 100 : 0);
+          }, 0) / dayTests.length
+        : 0;
+        
+      return {
+        day: date.toLocaleDateString('tr-TR', { weekday: 'short' }),
+        tests: dayTests.length,
+        accuracy: Math.round(avgAccuracy),
+        net: dayTests.reduce((sum, r) => sum + (r.dogruSayisi - r.yanlisSayisi/4), 0)
+      };
+    });
+  }, [userResults]);
+
+  const subjectDistributionData = useMemo(() => {
+    const distribution: Record<string, number> = {};
+    userResults.forEach(r => {
+      distribution[r.dersAdi] = (distribution[r.dersAdi] || 0) + 1;
+    });
+    
+    const colors = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4'];
+    return Object.entries(distribution).map(([subject, count], index) => ({
+      name: subject,
+      value: count,
+      color: colors[index % colors.length]
+    }));
+  }, [userResults]);
+
+  const performanceRadarData = useMemo(() => {
+    const subjects = ['Türkçe', 'Matematik', 'Fen Bilgisi', 'Sosyal Bilgiler', 'Din Kültürü', 'İngilizce'];
+    return subjects.map(subject => {
+      const subjectTests = userResults.filter(r => r.dersAdi === subject);
+      const avgAccuracy = subjectTests.length > 0
+        ? subjectTests.reduce((sum, r) => {
+            const total = r.dogruSayisi + r.yanlisSayisi + r.bosSayisi;
+            return sum + (total > 0 ? (r.dogruSayisi / total) * 100 : 0);
+          }, 0) / subjectTests.length
+        : 0;
+      
+      return {
+        subject: subject.replace(' Bilgisi', '').replace(' Kültürü', ''),
+        score: Math.round(avgAccuracy),
+        fullMark: 100
+      };
+    });
+  }, [userResults]);
 
   const openModal = (chart: React.ReactNode) => {
     setModalContent(chart);
@@ -557,16 +678,50 @@ const Dashboard: React.FC<DashboardProps> = ({ user }) => {
     <div className="min-h-screen bg-[#F9FAFB]">
       <Header user={user} onLogout={handleLogout} />
       
-      <main className="container mx-auto max-w-6xl px-3 sm:px-4 lg:px-6 py-3">
+      <main className="container mx-auto max-w-7xl px-3 sm:px-4 lg:px-6 py-4">
         {/* Header */}
-        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 mb-3">
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
             <div>
-                <h1 className="text-lg font-bold text-gray-900">Test Takibi</h1>
-                <p className="text-gray-500 text-xs">Test sonuçlarınızı yönetin ve analiz edin</p>
+                <h1 className="text-2xl font-bold text-gray-900">Akıllı Öğrenme Paneli</h1>
+                <p className="text-gray-600 text-sm">AI destekli performans analizi ve kişiselleştirilmiş öneriler</p>
             </div>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => setShowAiPanel(!showAiPanel)}
+                className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-purple-600 to-blue-600 text-white rounded-lg hover:from-purple-700 hover:to-blue-700 transition-all duration-200 shadow-lg"
+              >
+                <span className="text-sm">🤖</span>
+                <span className="text-sm font-medium">AI Öneriler</span>
+              </button>
+              <button
+                onClick={() => setIsQuickAddOpen(true)}
+                className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white font-medium py-2 px-4 rounded-lg transition-colors duration-200 shadow-lg"
+              >
+                <PlusIcon />
+                <span className="text-sm">Hızlı Ekle</span>
+              </button>
+            </div>
+        </div>
 
-        {/* Compact Goals + Badges Strip (sticky) */}
-        <div className="bg-white border border-gray-200 rounded-lg shadow-sm mb-3 sticky top-2 z-20">
+        {/* AI Insights Panel */}
+        {showAiPanel && aiInsights.length > 0 && (
+          <div className="bg-gradient-to-r from-purple-50 to-blue-50 border border-purple-200 rounded-xl p-4 mb-6">
+            <div className="flex items-center gap-2 mb-3">
+              <span className="text-2xl">🤖</span>
+              <h3 className="text-lg font-semibold text-gray-900">AI Önerileriniz</h3>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {aiInsights.map((insight, index) => (
+                <div key={index} className="bg-white/70 backdrop-blur-sm rounded-lg p-3 border border-white/50">
+                  <p className="text-sm text-gray-700">{insight}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Enhanced Goals + Badges Strip */}
+        <div className="bg-white border border-gray-200 rounded-xl shadow-sm mb-6 sticky top-2 z-20">
           <div className="flex items-center gap-2 p-1.5 overflow-x-auto">
             <div className="hidden sm:block shrink-0">
               <LevelBadge level={userLevel} compact />
@@ -633,21 +788,171 @@ const Dashboard: React.FC<DashboardProps> = ({ user }) => {
             </button>
           </div>
         </div>
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => setIsAdding(true)}
-                disabled={isAdding}
-                className="flex items-center justify-center gap-1.5 bg-green-600 hover:bg-green-700 text-white font-medium py-1 px-2.5 rounded-md transition-colors duration-200 disabled:bg-gray-400 disabled:cursor-not-allowed text-xs"
-              >
-                <PlusIcon />
-                Yeni Test
-              </button>
+
+        {/* Advanced Analytics Grid */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
+          {/* Weekly Progress Chart */}
+          <div className="lg:col-span-2 bg-white rounded-xl border border-gray-200 shadow-sm p-6">
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h3 className="text-lg font-semibold text-gray-900">Haftalık Gelişim</h3>
+                <p className="text-sm text-gray-600">Son 7 günlük performans analizi</p>
+              </div>
+              <div className="text-right">
+                <div className="text-2xl font-bold text-blue-600">{userDailyWeekly.weekly}</div>
+                <div className="text-xs text-gray-500">Bu hafta</div>
+              </div>
             </div>
+            <div className="h-64">
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={weeklyProgressData}>
+                  <defs>
+                    <linearGradient id="colorTests" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.3}/>
+                      <stop offset="95%" stopColor="#3b82f6" stopOpacity={0}/>
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                  <XAxis dataKey="day" axisLine={false} tickLine={false} />
+                  <YAxis axisLine={false} tickLine={false} />
+                  <Tooltip 
+                    contentStyle={{
+                      backgroundColor: 'white',
+                      border: '1px solid #e2e8f0',
+                      borderRadius: '8px',
+                      boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)'
+                    }}
+                  />
+                  <Area 
+                    type="monotone" 
+                    dataKey="tests" 
+                    stroke="#3b82f6" 
+                    fillOpacity={1} 
+                    fill="url(#colorTests)"
+                    strokeWidth={2}
+                  />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
+          {/* Subject Distribution */}
+          <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
+            <div className="mb-4">
+              <h3 className="text-lg font-semibold text-gray-900">Ders Dağılımı</h3>
+              <p className="text-sm text-gray-600">Test çözme oranlarınız</p>
+            </div>
+            <div className="h-48">
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie
+                    data={subjectDistributionData}
+                    cx="50%"
+                    cy="50%"
+                    innerRadius={40}
+                    outerRadius={80}
+                    paddingAngle={5}
+                    dataKey="value"
+                  >
+                    {subjectDistributionData.map((entry, index) => (
+                      <Cell key={`cell-${index}`} fill={entry.color} />
+                    ))}
+                  </Pie>
+                  <Tooltip />
+                </PieChart>
+              </ResponsiveContainer>
+            </div>
+            <div className="mt-4 space-y-2">
+              {subjectDistributionData.slice(0, 3).map((item, index) => (
+                <div key={index} className="flex items-center justify-between text-sm">
+                  <div className="flex items-center gap-2">
+                    <div className="w-3 h-3 rounded-full" style={{ backgroundColor: item.color }}></div>
+                    <span className="text-gray-700">{item.name}</span>
+                  </div>
+                  <span className="font-medium text-gray-900">{item.value}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* Performance Radar & Quick Stats */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+          {/* Performance Radar */}
+          <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
+            <div className="mb-4">
+              <h3 className="text-lg font-semibold text-gray-900">Branş Performansı</h3>
+              <p className="text-sm text-gray-600">Tüm derslerdeki başarı oranınız</p>
+            </div>
+            <div className="h-64">
+              <ResponsiveContainer width="100%" height="100%">
+                <RadarChart data={performanceRadarData}>
+                  <PolarGrid />
+                  <PolarAngleAxis dataKey="subject" tick={{ fontSize: 12 }} />
+                  <PolarRadiusAxis angle={90} domain={[0, 100]} tick={false} />
+                  <Radar
+                    name="Başarı %"
+                    dataKey="score"
+                    stroke="#3b82f6"
+                    fill="#3b82f6"
+                    fillOpacity={0.3}
+                    strokeWidth={2}
+                  />
+                  <Tooltip />
+                </RadarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
+          {/* Enhanced Quick Stats */}
+          <div className="space-y-4">
+            <div className="bg-gradient-to-r from-blue-500 to-purple-600 rounded-xl p-6 text-white">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="text-lg font-semibold">Günlük Hedef</h3>
+                  <p className="text-blue-100 text-sm">Test çözme hedefiniz</p>
+                </div>
+                <div className="text-right">
+                  <div className="text-3xl font-bold">{userDailyWeekly.daily}/{dailyTarget}</div>
+                  <div className="text-sm text-blue-100">
+                    {userDailyWeekly.daily >= dailyTarget ? '✅ Tamamlandı!' : 'Devam et!'}
+                  </div>
+                </div>
+              </div>
+              <div className="mt-4 bg-white/20 rounded-full h-2">
+                <div 
+                  className="bg-white rounded-full h-2 transition-all duration-300"
+                  style={{ width: `${Math.min(100, (userDailyWeekly.daily / dailyTarget) * 100)}%` }}
+                ></div>
+              </div>
+            </div>
+
+            <div className="bg-gradient-to-r from-emerald-500 to-teal-600 rounded-xl p-6 text-white">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="text-lg font-semibold">Haftalık Hedef</h3>
+                  <p className="text-emerald-100 text-sm">Bu haftaki ilerlemeniz</p>
+                </div>
+                <div className="text-right">
+                  <div className="text-3xl font-bold">{userDailyWeekly.weekly}/{weeklyTarget}</div>
+                  <div className="text-sm text-emerald-100">
+                    {userDailyWeekly.weekly >= weeklyTarget ? '🎉 Hedef aşıldı!' : 'Güzel gidiyor!'}
+                  </div>
+                </div>
+              </div>
+              <div className="mt-4 bg-white/20 rounded-full h-2">
+                <div 
+                  className="bg-white rounded-full h-2 transition-all duration-300"
+                  style={{ width: `${Math.min(100, (userDailyWeekly.weekly / weeklyTarget) * 100)}%` }}
+                ></div>
+              </div>
+            </div>
+          </div>
         </div>
 
         {/* Course Filter */}
         {displayResults.length > 0 && courseOptions.length > 1 && (
-          <div className="bg-white p-2.5 rounded-lg border border-gray-200 shadow-sm mb-3">
+          <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm mb-6">
             <div className="flex items-center gap-2">
               <div className="flex items-center gap-2">
                 <div className="text-gray-500 w-4 h-4">
@@ -704,32 +1009,38 @@ const Dashboard: React.FC<DashboardProps> = ({ user }) => {
 
         {/* KPI Row */}
         {scopeResults.length > 0 && (
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3">
-            <div className="bg-white rounded-lg border border-gray-200 shadow-sm p-2.5">
-              <p className="text-[11px] uppercase tracking-wide text-gray-500">Toplam Test</p>
-              <p className="text-lg font-semibold text-gray-900">{stats.totalTests}</p>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6">
+            <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4 hover:shadow-md transition-shadow">
+              <p className="text-xs uppercase tracking-wide text-gray-500 mb-1">Toplam Test</p>
+              <p className="text-2xl font-bold text-gray-900">{stats.totalTests}</p>
+              <p className="text-xs text-emerald-600 mt-1">+{userDailyWeekly.weekly} bu hafta</p>
             </div>
-            <div className="bg-white rounded-lg border border-gray-200 shadow-sm p-2.5">
-              <p className="text-[11px] uppercase tracking-wide text-gray-500">Toplam Soru</p>
-              <p className="text-lg font-semibold text-gray-900">{stats.totalQuestions}</p>
+            <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4 hover:shadow-md transition-shadow">
+              <p className="text-xs uppercase tracking-wide text-gray-500 mb-1">Toplam Soru</p>
+              <p className="text-2xl font-bold text-gray-900">{stats.totalQuestions}</p>
+              <p className="text-xs text-blue-600 mt-1">Ortalama: {Math.round(stats.totalQuestions / Math.max(1, stats.totalTests))}/test</p>
             </div>
-            <div className="bg-white rounded-lg border border-gray-200 shadow-sm p-2.5">
-              <p className="text-[11px] uppercase tracking-wide text-gray-500">Başarı (%)</p>
-              <p className="text-lg font-semibold {stats.overallSuccessRate>=70? 'text-emerald-700' : stats.overallSuccessRate>=60 ? 'text-amber-700' : 'text-rose-700'}">{stats.overallSuccessRate}</p>
+            <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4 hover:shadow-md transition-shadow">
+              <p className="text-xs uppercase tracking-wide text-gray-500 mb-1">Başarı Oranı</p>
+              <p className={`text-2xl font-bold ${stats.overallSuccessRate>=70? 'text-emerald-700' : stats.overallSuccessRate>=60 ? 'text-amber-700' : 'text-rose-700'}`}>
+                %{stats.overallSuccessRate}
+              </p>
+              <p className="text-xs text-gray-600 mt-1">Hedef: %85</p>
             </div>
-            <div className="bg-white rounded-lg border border-gray-200 shadow-sm p-2.5">
-              <p className="text-[11px] uppercase tracking-wide text-gray-500">Son Net</p>
-              <p className="text-lg font-semibold text-gray-900">{lastNet}</p>
+            <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4 hover:shadow-md transition-shadow">
+              <p className="text-xs uppercase tracking-wide text-gray-500 mb-1">Son Net</p>
+              <p className="text-2xl font-bold text-gray-900">{lastNet}</p>
+              <p className="text-xs text-purple-600 mt-1">Ortalama: {avgLast5Net}</p>
             </div>
           </div>
         )}
 
         {/* Main Content Grid */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 mb-3">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
           {/* Left Column - Stats */}
           <div className="lg:col-span-1">
             {scopeResults.length > 0 && (
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-2 gap-4">
               <StatCard
                 title="Toplam Test"
                 value={stats.totalTests}
@@ -751,46 +1062,48 @@ const Dashboard: React.FC<DashboardProps> = ({ user }) => {
               <PerformanceCards data={userResults} scopeBadge={<ScopeBadge scope={scope} />} />
             </div>
             )}
-            {/* Weak-topic quick tasks */}
+            
+            {/* Enhanced Weak-topic quick tasks */}
             {weakestThree.length > 0 && (
-              <div className="mt-3 bg-white rounded-lg border border-gray-200 shadow-sm p-2.5">
-                <div className="flex items-center justify-between mb-2">
-                  <h3 className="text-xs font-semibold text-gray-900">Zayıf Branşlar – Hızlı Görev</h3>
-                  <span className="text-[10px] text-gray-500">Tek tıkla görev oluştur</span>
+              <div className="mt-4 bg-gradient-to-br from-orange-50 to-red-50 rounded-xl border border-orange-200 shadow-sm p-4">
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="text-sm font-semibold text-gray-900">🎯 Gelişim Alanları</h3>
+                  <span className="text-xs text-orange-600 bg-orange-100 px-2 py-1 rounded-full">AI Önerisi</span>
                 </div>
-                <div className="grid grid-cols-1 gap-2">
+                <div className="space-y-3">
                   {weakestThree.map(([name, val]) => {
                     const max = (name==='Türkçe' || name==='Matematik' || name==='Fen Bilgisi') ? 20 : 10;
                     const pct = Math.min(100, Math.max(0, (Number(val) / max) * 100));
                     return (
-                      <div key={String(name)} className="flex items-center gap-2">
+                      <div key={String(name)} className="bg-white/70 backdrop-blur-sm rounded-lg p-3 border border-white/50">
                         <div className="flex-1">
                           <div className="flex items-center justify-between">
-                            <span className="text-xs text-gray-800 font-medium truncate">{String(name)}</span>
-                            <span className="text-[10px] text-gray-600">{val.toFixed(2)} / {max} net</span>
+                            <span className="text-sm text-gray-800 font-medium">{String(name)}</span>
+                            <span className="text-xs text-gray-600">{val.toFixed(1)}/{max}</span>
                           </div>
-                          <div className="mt-1 h-1.5 bg-gray-100 rounded-full overflow-hidden">
-                            <div className="h-1.5 bg-amber-500" style={{ width: `${pct}%` }} />
+                          <div className="mt-2 h-2 bg-gray-200 rounded-full overflow-hidden">
+                            <div className="h-2 bg-gradient-to-r from-orange-400 to-red-500 rounded-full transition-all duration-300" style={{ width: `${pct}%` }} />
                           </div>
+                          <button
+                            type="button"
+                            onClick={() => handleCreateQuickTask(String(name))}
+                            className="mt-2 w-full px-3 py-1.5 text-xs rounded-lg bg-gradient-to-r from-orange-500 to-red-500 text-white hover:from-orange-600 hover:to-red-600 transition-all duration-200"
+                          >
+                            📚 Pratik Görev Oluştur
+                          </button>
                         </div>
-                        <button
-                          type="button"
-                          onClick={() => handleCreateQuickTask(String(name))}
-                          className="shrink-0 px-2 py-1 text-[10px] rounded-md bg-emerald-600 text-white hover:bg-emerald-700"
-                        >Görev Ekle</button>
                       </div>
                     );
                   })}
                 </div>
               </div>
             )}
-            {/* Removed LevelBadge + InsightsCards block as requested */}
-                    </div>
+          </div>
 
           {/* Right Column - Charts + Row below charts */}
           {scopeResults.length > 0 && (
             <div className="lg:col-span-2">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mb-3">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
                 <div className="transition-shadow duration-200">
                   <CourseSuccessChart
                     data={scopeResults}
@@ -818,31 +1131,47 @@ const Dashboard: React.FC<DashboardProps> = ({ user }) => {
         </div>
         {/* Full-width Ranking Summary below main grid */}
         {scopeResults.length > 0 && (
-          <div className="mt-3 sm:mt-4">
+          <div className="mb-6">
             <RankingSummary data={scopeResults} currentUserId={user.uid} />
           </div>
         )}
+        
+        {/* Enhanced Test Results Table */}
         {(displayResults.length > 0 || isAdding) && (
-          <div className="bg-white rounded-lg border border-gray-200 shadow-sm">
-            <div className="p-2.5 border-b border-gray-200">
+          <div className="bg-white rounded-xl border border-gray-200 shadow-sm">
+            <div className="p-4 border-b border-gray-200">
               <div className="flex flex-col sm:flex-row justify-between items-center gap-2">
-                <h2 className="text-xs font-semibold text-gray-900">
+                <div>
+                  <h2 className="text-lg font-semibold text-gray-900">
+                    {showOnlyMyResults ? 'Test Sonuçlarım' : 'Tüm Test Sonuçları'}
+                  </h2>
+                  <p className="text-sm text-gray-600">Detaylı analiz ve düzenleme seçenekleri</p>
+                </div>
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={() => setIsAdding(true)}
+                    disabled={isAdding}
+                    className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white font-medium py-2 px-4 rounded-lg transition-colors duration-200 disabled:bg-gray-400 disabled:cursor-not-allowed"
+                  >
+                    <PlusIcon />
+                    Yeni Test
+                  </button>
+                </div>
+              </div>
+              <div className="mt-3 flex items-center gap-2">
+                <input 
+                  type="checkbox" 
+                  id="user-filter"
+                  checked={showOnlyMyResults}
+                  onChange={(e) => setShowOnlyMyResults(e.target.checked)}
+                  disabled={scope === 'school'}
+                  className="h-4 w-4 rounded border-gray-300 text-emerald-600 focus:ring-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                />
+                <label htmlFor="user-filter" className="text-sm text-gray-600 select-none">
                   {showOnlyMyResults ? 'Test Sonuçlarım' : 'Tüm Test Sonuçları'}
-                </h2>
-                <div className="flex items-center gap-2">
-                    <input 
-                        type="checkbox" 
-                    id="user-filter"
-                    checked={showOnlyMyResults}
-                    onChange={(e) => setShowOnlyMyResults(e.target.checked)}
-                    disabled={scope === 'school'}
-                    className="h-3 w-3 rounded border-gray-300 text-green-600 focus:ring-green-500 disabled:opacity-50 disabled:cursor-not-allowed"
-                  />
-                  <label htmlFor="user-filter" className="text-xs text-gray-600 select-none">
-                    Kendi Test Sonuçlarım{scope === 'school' ? ' (okul genelinde devre dışı)' : ''}
-                  </label>
-                </div>
-                </div>
+                  {scope === 'school' ? ' (okul genelinde devre dışı)' : ''}
+                </label>
+              </div>
             </div>
            <TestResultsTable
               results={paginatedResults}
@@ -859,14 +1188,14 @@ const Dashboard: React.FC<DashboardProps> = ({ user }) => {
               isCompact={isCompact}
             />
             {totalResults > 0 && (
-              <div className="p-2.5 border-t border-gray-200">
+              <div className="p-4 border-t border-gray-200 bg-gray-50">
                 <div className="flex flex-col sm:flex-row justify-between items-center gap-2">
                 <div className="flex items-center gap-2">
-                    <span className="text-[10px] text-gray-600">Göster:</span>
+                    <span className="text-sm text-gray-600">Göster:</span>
                     <select 
                         value={pageSize} 
                         onChange={(e) => setPageSize(e.target.value === 'all' ? 'all' : Number(e.target.value))}
-                      className="rounded border-gray-300 shadow-sm bg-white focus:ring-1 focus:ring-green-500 focus:border-green-500 py-0.5 px-1.5 text-[10px]"
+                      className="rounded-lg border-gray-300 shadow-sm bg-white focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500 py-1 px-2 text-sm"
                     >
                         <option value={25}>25</option>
                         <option value={50}>50</option>
@@ -874,21 +1203,21 @@ const Dashboard: React.FC<DashboardProps> = ({ user }) => {
                     </select>
                 </div>
                   <div className="flex items-center gap-3">
-                    <span className="text-[10px] text-gray-600">
+                    <span className="text-sm text-gray-600">
                       {currentPage} / {totalPages}
                     </span>
                     <div className="flex gap-1">
                         <button 
                             onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
                             disabled={currentPage === 1}
-                        className="px-1.5 py-0.5 bg-white border border-gray-300 rounded hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed text-[10px]"
+                        className="px-3 py-1 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed text-sm"
                         >
                         ←
                         </button>
                         <button 
                             onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
                             disabled={currentPage === totalPages}
-                        className="px-1.5 py-0.5 bg-white border border-gray-300 rounded hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed text-[10px]"
+                        className="px-3 py-1 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed text-sm"
                         >
                         →
                         </button>
@@ -904,16 +1233,18 @@ const Dashboard: React.FC<DashboardProps> = ({ user }) => {
 
         {/* Empty State */}
         {displayResults.length === 0 && !isAdding && (
-          <div className="bg-white rounded-lg border border-gray-200 shadow-sm p-12 text-center">
-            <BookOpenIcon className="mx-auto h-12 w-12 text-gray-400 mb-4" />
-            <h3 className="text-lg font-medium text-gray-900 mb-2">Henüz test sonucu yok</h3>
-            <p className="text-gray-500 mb-6">Henüz test sonucunuz yok</p>
+          <div className="bg-gradient-to-br from-blue-50 to-purple-50 rounded-xl border border-blue-200 shadow-sm p-12 text-center">
+            <div className="w-20 h-20 mx-auto mb-6 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full flex items-center justify-center">
+              <BookOpenIcon className="h-10 w-10 text-white" />
+            </div>
+            <h3 className="text-xl font-semibold text-gray-900 mb-2">Öğrenme Yolculuğunuz Başlasın!</h3>
+            <p className="text-gray-600 mb-6 max-w-md mx-auto">İlk test sonucunuzu ekleyerek AI destekli analiz ve kişiselleştirilmiş önerilerden yararlanmaya başlayın.</p>
             <button
               onClick={() => setIsAdding(true)}
-              className="inline-flex items-center gap-2 bg-green-600 hover:bg-green-700 text-white font-medium py-2 px-4 rounded-lg transition-colors duration-200"
+              className="inline-flex items-center gap-2 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white font-medium py-3 px-6 rounded-lg transition-all duration-200 shadow-lg"
             >
               <PlusIcon />
-              İlk Test Sonucunu Ekle
+              🚀 İlk Test Sonucunu Ekle
             </button>
           </div>
         )}
@@ -941,25 +1272,45 @@ const Dashboard: React.FC<DashboardProps> = ({ user }) => {
 
       {/* Goals Settings Modal */}
       {isGoalsOpen && (
-        <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/30">
-          <div className="bg-white rounded-lg shadow-lg w-full max-w-sm p-3">
-            <div className="flex items-center justify-between mb-2">
-              <h3 className="text-sm font-semibold text-gray-900">Hedefleri Düzenle</h3>
+        <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/40 backdrop-blur-sm">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-md p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold text-gray-900">🎯 Hedefleri Düzenle</h3>
               <button onClick={()=>setIsGoalsOpen(false)} className="text-gray-500 hover:text-gray-700">×</button>
             </div>
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="text-[11px] text-gray-600">Günlük hedef</label>
-                <input type="number" min={1} max={20} value={tmpDaily} onChange={(e)=> setTmpDaily(e.target.value.replace(/\D/g,''))} className="w-full rounded border-gray-300 bg-white text-xs px-2 py-1" />
+                <label className="text-sm text-gray-700 font-medium">Günlük Hedef</label>
+                <input 
+                  type="number" 
+                  min={1} 
+                  max={20} 
+                  value={tmpDaily} 
+                  onChange={(e)=> setTmpDaily(e.target.value.replace(/\D/g,''))} 
+                  className="w-full mt-1 rounded-lg border-gray-300 bg-white text-sm px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-blue-500" 
+                />
               </div>
               <div>
-                <label className="text-[11px] text-gray-600">Haftalık hedef</label>
-                <input type="number" min={1} max={50} value={tmpWeekly} onChange={(e)=> setTmpWeekly(e.target.value.replace(/\D/g,''))} className="w-full rounded border-gray-300 bg-white text-xs px-2 py-1" />
+                <label className="text-sm text-gray-700 font-medium">Haftalık Hedef</label>
+                <input 
+                  type="number" 
+                  min={1} 
+                  max={50} 
+                  value={tmpWeekly} 
+                  onChange={(e)=> setTmpWeekly(e.target.value.replace(/\D/g,''))} 
+                  className="w-full mt-1 rounded-lg border-gray-300 bg-white text-sm px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-blue-500" 
+                />
               </div>
             </div>
-            <div className="flex justify-end gap-2 mt-3">
-              <button onClick={()=>setIsGoalsOpen(false)} className="px-2 py-1 text-xs rounded border border-gray-300">Vazgeç</button>
-              <button onClick={()=>{
+            <div className="flex justify-end gap-3 mt-6">
+              <button 
+                onClick={()=>setIsGoalsOpen(false)} 
+                className="px-4 py-2 text-sm rounded-lg border border-gray-300 hover:bg-gray-50 transition-colors"
+              >
+                Vazgeç
+              </button>
+              <button 
+                onClick={()=>{
                 const d = Math.max(1, Math.min(20, parseInt(tmpDaily || '1', 10)));
                 const w = Math.max(1, Math.min(50, parseInt(tmpWeekly || '3', 10)));
                 setDailyTarget(d);
@@ -967,7 +1318,11 @@ const Dashboard: React.FC<DashboardProps> = ({ user }) => {
                 try { localStorage.setItem('goals_v1', JSON.stringify({ daily: d, weekly: w })); } catch {}
                 setIsGoalsOpen(false);
                 setToast({ message: 'Hedefler güncellendi.', type: 'success' });
-              }} className="px-2 py-1 text-xs rounded bg-emerald-600 text-white">Kaydet</button>
+              }} 
+                className="px-4 py-2 text-sm rounded-lg bg-gradient-to-r from-blue-600 to-purple-600 text-white hover:from-blue-700 hover:to-purple-700 transition-all duration-200"
+              >
+                💾 Kaydet
+              </button>
             </div>
           </div>
         </div>
