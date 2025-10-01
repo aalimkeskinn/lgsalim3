@@ -12,11 +12,7 @@ import PlusIcon from './icons/PlusIcon';
 import EditIcon from './icons/EditIcon';
 import TrashIcon from './icons/TrashIcon';
 import ChartBarIcon from './icons/ChartBarIcon';
-import BookOpenIcon from './icons/BookOpenIcon';
-import CalendarIcon from './icons/CalendarIcon';
-import ExpandIcon from './icons/ExpandIcon';
-import ChartModal from './ChartModal';
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar, Legend } from 'recharts';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 
 interface ExamsPageProps {
   user: User;
@@ -31,8 +27,6 @@ const ExamsPage: React.FC<ExamsPageProps> = ({ user }) => {
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
   const [sortBy, setSortBy] = useState<'date' | 'totalNet'>('date');
   const [filterPeriod, setFilterPeriod] = useState<'all' | '30' | '7'>('all');
-  const [isChartModalOpen, setIsChartModalOpen] = useState(false);
-  const [modalChart, setModalChart] = useState<React.ReactNode>(null);
 
   // Subscribe to user's exams
   useEffect(() => {
@@ -165,7 +159,7 @@ const ExamsPage: React.FC<ExamsPageProps> = ({ user }) => {
       const previous = nets.slice(3, 6);
       const recentAvg = recent.reduce((a, b) => a + b, 0) / recent.length;
       const previousAvg = previous.reduce((a, b) => a + b, 0) / previous.length;
-      improvement = recentAvg - previousAvg;
+      improvement = ((recentAvg - previousAvg) / previousAvg) * 100;
     }
 
     return { totalExams, avgNet, bestNet, improvement };
@@ -176,85 +170,62 @@ const ExamsPage: React.FC<ExamsPageProps> = ({ user }) => {
     return filteredAndSortedExams.slice().reverse().map((exam, index) => {
       const examDate = exam.createdAt ? (exam.createdAt.toDate ? exam.createdAt.toDate() : new Date(exam.createdAt)) : null;
       return {
-        name: examDate ? examDate.toLocaleDateString('tr-TR', { day: '2-digit', month: '2-digit' }) : `Deneme ${index + 1}`,
-        'Toplam Net': calculateTotalNet(exam),
-        'Türkçe': Math.max(0, exam.turkce.dogru - exam.turkce.yanlis / 3),
-        'Matematik': Math.max(0, exam.matematik.dogru - exam.matematik.yanlis / 3),
-        'Fen': Math.max(0, exam.fen.dogru - exam.fen.yanlis / 3),
+        name: examDate ? examDate.toLocaleDateString('tr-TR', { day: '2-digit', month: '2-digit' }) : `D${index + 1}`,
+        'Toplam Net': Math.round(calculateTotalNet(exam) * 100) / 100,
       };
     });
   }, [filteredAndSortedExams]);
 
-  const branchComparisonData = useMemo(() => {
-    if (exams.length === 0) return [];
+  // Publication performance data
+  const publicationData = useMemo(() => {
+    const pubStats: Record<string, { total: number; count: number }> = {};
     
-    const branches = ['Türkçe', 'Matematik', 'Fen Bilimleri', 'T.C. İnkılap', 'Din Kültürü', 'Yabancı Dil'];
-    return branches.map(branch => {
-      const branchKey = branch === 'Türkçe' ? 'turkce' : 
-                       branch === 'Matematik' ? 'matematik' :
-                       branch === 'Fen Bilimleri' ? 'fen' :
-                       branch === 'T.C. İnkılap' ? 'inkilap' :
-                       branch === 'Din Kültürü' ? 'din' : 'ingilizce';
-      
-      const avgNet = exams.reduce((sum, exam) => {
-        const branchData = exam[branchKey as keyof ExamResult] as any;
-        return sum + Math.max(0, branchData.dogru - branchData.yanlis / 3);
-      }, 0) / exams.length;
+    exams.forEach(exam => {
+      const pub = exam.yayin || 'Diğer';
+      const net = calculateTotalNet(exam);
+      if (!pubStats[pub]) pubStats[pub] = { total: 0, count: 0 };
+      pubStats[pub].total += net;
+      pubStats[pub].count += 1;
+    });
 
-      const maxPossible = branch === 'Türkçe' || branch === 'Matematik' || branch === 'Fen Bilimleri' ? 20 : 10;
+    return Object.entries(pubStats).map(([pub, stats]) => ({
+      name: pub,
+      average: Math.round((stats.total / stats.count) * 100) / 100,
+      maxPossible: 110, // Total possible net score
+    }));
+  }, [exams]);
+
+  // Heat map data for subject performance across exams
+  const heatMapData = useMemo(() => {
+    const subjects = ['Türkçe', 'Matematik', 'Fen', 'İnkılap', 'Din', 'İngilizce'];
+    const recentExams = filteredAndSortedExams.slice(0, 10); // Last 10 exams
+    
+    return subjects.map(subject => {
+      const subjectKey = subject === 'Türkçe' ? 'turkce' : 
+                        subject === 'Matematik' ? 'matematik' :
+                        subject === 'Fen' ? 'fen' :
+                        subject === 'İnkılap' ? 'inkilap' :
+                        subject === 'Din' ? 'din' : 'ingilizce';
       
+      const examScores = recentExams.map((exam, index) => {
+        const branchData = exam[subjectKey as keyof ExamResult] as any;
+        const net = Math.max(0, branchData.dogru - branchData.yanlis / 3);
+        const maxPossible = subject === 'Türkçe' || subject === 'Matematik' || subject === 'Fen' ? 20 : 10;
+        const percentage = (net / maxPossible) * 100;
+        
+        return {
+          exam: `D${recentExams.length - index}`,
+          score: Math.round(percentage),
+          net: Math.round(net * 100) / 100,
+        };
+      });
+
       return {
-        branch,
-        'Ortalama Net': avgNet,
-        'Başarı %': (avgNet / maxPossible) * 100,
+        subject,
+        scores: examScores,
       };
     });
-  }, [exams]);
-
-  const radarChartData = useMemo(() => {
-    if (exams.length === 0) return [];
-    
-    const latest = exams[0];
-    if (!latest) return [];
-
-    return [
-      {
-        subject: 'Türkçe',
-        net: Math.max(0, latest.turkce.dogru - latest.turkce.yanlis / 3),
-        fullMark: 20,
-      },
-      {
-        subject: 'Matematik',
-        net: Math.max(0, latest.matematik.dogru - latest.matematik.yanlis / 3),
-        fullMark: 20,
-      },
-      {
-        subject: 'Fen',
-        net: Math.max(0, latest.fen.dogru - latest.fen.yanlis / 3),
-        fullMark: 20,
-      },
-      {
-        subject: 'İnkılap',
-        net: Math.max(0, latest.inkilap.dogru - latest.inkilap.yanlis / 3),
-        fullMark: 10,
-      },
-      {
-        subject: 'Din',
-        net: Math.max(0, latest.din.dogru - latest.din.yanlis / 3),
-        fullMark: 10,
-      },
-      {
-        subject: 'İngilizce',
-        net: Math.max(0, latest.ingilizce.dogru - latest.ingilizce.yanlis / 3),
-        fullMark: 10,
-      },
-    ];
-  }, [exams]);
-
-  const openChartModal = (chart: React.ReactNode) => {
-    setModalChart(chart);
-    setIsChartModalOpen(true);
-  };
+  }, [filteredAndSortedExams]);
 
   if (loading) {
     return (
@@ -271,18 +242,18 @@ const ExamsPage: React.FC<ExamsPageProps> = ({ user }) => {
     <div className="min-h-screen bg-gray-50">
       <Header user={user} onLogout={() => signOut(auth)} />
       
-      <main className="container mx-auto max-w-7xl px-3 sm:px-4 lg:px-6 py-3">
-        {/* Compact Header */}
-        <div className="flex items-center justify-between mb-4">
+      <main className="container mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-6">
+        {/* Header */}
+        <div className="flex items-center justify-between mb-8">
           <div>
-            <h1 className="text-lg font-bold text-gray-900">LGS Deneme Sınavları</h1>
-            <p className="text-xs text-gray-500">Deneme sonuçlarınızı takip edin</p>
+            <h1 className="text-2xl font-bold text-gray-900">LGS Deneme Performans Takibi</h1>
+            <p className="text-gray-600 mt-1">Akademik ilerlemenizi branşlar ve sınavlar boyunca takip edin.</p>
           </div>
-          <div className="flex items-center gap-2">
-            <a href="#dashboard" className="text-xs text-emerald-700 hover:underline">← Panel</a>
+          <div className="flex items-center gap-3">
+            <a href="#dashboard" className="text-sm text-blue-600 hover:underline">← Panel</a>
             <button
               onClick={() => setIsAddModalOpen(true)}
-              className="flex items-center gap-1 bg-emerald-600 hover:bg-emerald-700 text-white font-medium py-1 px-2.5 rounded-md text-xs"
+              className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-4 rounded-lg transition-colors"
             >
               <PlusIcon />
               Yeni Deneme
@@ -290,266 +261,274 @@ const ExamsPage: React.FC<ExamsPageProps> = ({ user }) => {
           </div>
         </div>
 
-        {/* Compact Statistics */}
-        {exams.length > 0 && (
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 mb-4">
-            <div className="bg-white rounded-lg p-2.5 border border-gray-200 shadow-sm">
-              <p className="text-[10px] text-gray-500 uppercase">Toplam</p>
-              <p className="text-lg font-bold text-gray-900">{stats.totalExams}</p>
-            </div>
-            <div className="bg-white rounded-lg p-2.5 border border-gray-200 shadow-sm">
-              <p className="text-[10px] text-gray-500 uppercase">Ortalama</p>
-              <p className="text-lg font-bold text-emerald-600">{stats.avgNet.toFixed(1)}</p>
-            </div>
-            <div className="bg-white rounded-lg p-2.5 border border-gray-200 shadow-sm">
-              <p className="text-[10px] text-gray-500 uppercase">En Yüksek</p>
-              <p className="text-lg font-bold text-blue-600">{stats.bestNet.toFixed(1)}</p>
-            </div>
-            <div className="bg-white rounded-lg p-2.5 border border-gray-200 shadow-sm">
-              <p className="text-[10px] text-gray-500 uppercase">Gelişim</p>
-              <p className={`text-lg font-bold ${stats.improvement >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                {stats.improvement >= 0 ? '+' : ''}{stats.improvement.toFixed(1)}
-              </p>
-            </div>
-          </div>
-        )}
-
-        {/* Charts Section */}
-        {exams.length > 0 && (
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 mb-4">
-            {/* Progress Chart */}
-            <div className="bg-white rounded-lg border border-gray-200 shadow-sm p-2">
-              <div className="flex items-center justify-between mb-2">
-                <h3 className="text-xs font-semibold text-gray-900">Net Gelişimi</h3>
-                <button
-                  onClick={() => openChartModal(
-                    <div className="p-4">
-                      <h3 className="text-lg font-semibold mb-4">Net Gelişimi</h3>
-                      <ResponsiveContainer width="100%" height={400}>
-                        <LineChart data={progressChartData}>
-                          <CartesianGrid strokeDasharray="3 3" />
-                          <XAxis dataKey="name" fontSize={12} />
-                          <YAxis fontSize={12} />
-                          <Tooltip />
-                          <Legend />
-                          <Line type="monotone" dataKey="Toplam Net" stroke="#10b981" strokeWidth={2} />
-                          <Line type="monotone" dataKey="Türkçe" stroke="#3b82f6" strokeWidth={1} />
-                          <Line type="monotone" dataKey="Matematik" stroke="#f59e0b" strokeWidth={1} />
-                          <Line type="monotone" dataKey="Fen" stroke="#8b5cf6" strokeWidth={1} />
-                        </LineChart>
-                      </ResponsiveContainer>
-                    </div>
-                  )}
-                  className="p-1 hover:bg-gray-100 rounded"
-                >
-                  <ExpandIcon className="h-3 w-3" />
-                </button>
-              </div>
-              <ResponsiveContainer width="100%" height={120}>
-                <LineChart data={progressChartData}>
-                  <XAxis dataKey="name" fontSize={8} />
-                  <YAxis fontSize={8} />
-                  <Tooltip />
-                  <Line type="monotone" dataKey="Toplam Net" stroke="#10b981" strokeWidth={2} dot={false} />
-                </LineChart>
-              </ResponsiveContainer>
-            </div>
-
-            {/* Branch Comparison */}
-            <div className="bg-white rounded-lg border border-gray-200 shadow-sm p-2">
-              <div className="flex items-center justify-between mb-2">
-                <h3 className="text-xs font-semibold text-gray-900">Branş Karşılaştırma</h3>
-                <button
-                  onClick={() => openChartModal(
-                    <div className="p-4">
-                      <h3 className="text-lg font-semibold mb-4">Branş Karşılaştırma</h3>
-                      <ResponsiveContainer width="100%" height={400}>
-                        <BarChart data={branchComparisonData}>
-                          <CartesianGrid strokeDasharray="3 3" />
-                          <XAxis dataKey="branch" fontSize={12} angle={-45} textAnchor="end" height={80} />
-                          <YAxis fontSize={12} />
-                          <Tooltip />
-                          <Legend />
-                          <Bar dataKey="Ortalama Net" fill="#3b82f6" />
-                        </BarChart>
-                      </ResponsiveContainer>
-                    </div>
-                  )}
-                  className="p-1 hover:bg-gray-100 rounded"
-                >
-                  <ExpandIcon className="h-3 w-3" />
-                </button>
-              </div>
-              <ResponsiveContainer width="100%" height={120}>
-                <BarChart data={branchComparisonData}>
-                  <XAxis dataKey="branch" fontSize={8} angle={-45} textAnchor="end" height={40} />
-                  <YAxis fontSize={8} />
-                  <Tooltip />
-                  <Bar dataKey="Ortalama Net" fill="#3b82f6" />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-
-            {/* Radar Chart */}
-            <div className="bg-white rounded-lg border border-gray-200 shadow-sm p-2">
-              <div className="flex items-center justify-between mb-2">
-                <h3 className="text-xs font-semibold text-gray-900">Son Deneme Analizi</h3>
-                <button
-                  onClick={() => openChartModal(
-                    <div className="p-4">
-                      <h3 className="text-lg font-semibold mb-4">Son Deneme Analizi</h3>
-                      <ResponsiveContainer width="100%" height={400}>
-                        <RadarChart data={radarChartData}>
-                          <PolarGrid />
-                          <PolarAngleAxis dataKey="subject" fontSize={12} />
-                          <PolarRadiusAxis fontSize={10} />
-                          <Radar name="Net" dataKey="net" stroke="#8884d8" fill="#8884d8" fillOpacity={0.3} />
-                        </RadarChart>
-                      </ResponsiveContainer>
-                    </div>
-                  )}
-                  className="p-1 hover:bg-gray-100 rounded"
-                >
-                  <ExpandIcon className="h-3 w-3" />
-                </button>
-              </div>
-              <ResponsiveContainer width="100%" height={120}>
-                <RadarChart data={radarChartData}>
-                  <PolarGrid />
-                  <PolarAngleAxis dataKey="subject" fontSize={8} />
-                  <Radar name="Net" dataKey="net" stroke="#8884d8" fill="#8884d8" fillOpacity={0.3} />
-                </RadarChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
-        )}
-
-        {/* Filters */}
-        {exams.length > 0 && (
-          <div className="bg-white rounded-lg p-2.5 border border-gray-200 shadow-sm mb-3">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <select
-                  value={sortBy}
-                  onChange={(e) => setSortBy(e.target.value as 'date' | 'totalNet')}
-                  className="rounded border-gray-300 bg-white text-xs py-1 px-2"
-                >
-                  <option value="date">Tarihe Göre</option>
-                  <option value="totalNet">Net Puana Göre</option>
-                </select>
-                
-                <select
-                  value={filterPeriod}
-                  onChange={(e) => setFilterPeriod(e.target.value as 'all' | '30' | '7')}
-                  className="rounded border-gray-300 bg-white text-xs py-1 px-2"
-                >
-                  <option value="all">Tüm Zamanlar</option>
-                  <option value="30">Son 30 Gün</option>
-                  <option value="7">Son 7 Gün</option>
-                </select>
-              </div>
-              
-              <span className="text-xs text-gray-500">
-                {filteredAndSortedExams.length} deneme
-              </span>
-            </div>
-          </div>
-        )}
-
-        {/* Compact Exams List */}
-        {filteredAndSortedExams.length === 0 ? (
-          <div className="bg-white rounded-lg border border-gray-200 shadow-sm p-8 text-center">
-            <ChartBarIcon className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-            <h3 className="text-lg font-semibold text-gray-900 mb-2">Henüz deneme sınavı yok</h3>
-            <p className="text-gray-600 mb-4">İlk deneme sınavı sonucunuzu ekleyerek başlayın</p>
+        {exams.length === 0 ? (
+          <div className="bg-white rounded-xl border border-gray-200 p-12 text-center">
+            <ChartBarIcon className="h-16 w-16 text-gray-400 mx-auto mb-4" />
+            <h3 className="text-xl font-semibold text-gray-900 mb-2">Henüz deneme sınavı yok</h3>
+            <p className="text-gray-600 mb-6">İlk deneme sınavı sonucunuzu ekleyerek başlayın</p>
             <button
               onClick={() => setIsAddModalOpen(true)}
-              className="inline-flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white font-medium rounded-lg hover:bg-emerald-700"
+              className="inline-flex items-center gap-2 px-6 py-3 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 transition-colors"
             >
               <PlusIcon />
               İlk Deneme Sınavını Ekle
             </button>
           </div>
         ) : (
-          <div className="space-y-2">
-            {filteredAndSortedExams.map((exam) => {
-              const totalNet = calculateTotalNet(exam);
-              const examDate = exam.createdAt ? (exam.createdAt.toDate ? exam.createdAt.toDate() : new Date(exam.createdAt)) : null;
-              
-              return (
-                <div key={exam.id} className="bg-white rounded-lg border border-gray-200 shadow-sm hover:shadow-md transition-shadow p-3">
-                  {/* Compact Header */}
-                  <div className="flex items-center justify-between mb-2">
-                    <div className="flex-1">
-                      <div className="flex items-center gap-2 mb-1">
-                        <h3 className="text-sm font-semibold text-gray-900">
-                          {exam.ad || 'Deneme Sınavı'}
-                        </h3>
-                        {exam.yayin && (
-                          <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-blue-50 text-blue-700 border border-blue-200">
-                            {exam.yayin}
-                          </span>
-                        )}
-                      </div>
-                      <div className="flex items-center gap-3 text-xs text-gray-600">
-                        {examDate && (
-                          <span>{examDate.toLocaleDateString('tr-TR')}</span>
-                        )}
-                        <span className="font-semibold text-emerald-600">
-                          Toplam Net: {totalNet.toFixed(1)}
-                        </span>
-                      </div>
-                    </div>
-                    
-                    <div className="flex items-center gap-1">
-                      <button
-                        onClick={() => setEditingExam(exam)}
-                        className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded"
-                      >
-                        <EditIcon />
-                      </button>
-                      <button
-                        onClick={() => setConfirmDeleteId(exam.id)}
-                        className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded"
-                      >
-                        <TrashIcon />
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Compact Branch Results */}
-                  <div className="grid grid-cols-3 lg:grid-cols-6 gap-2">
-                    {[
-                      { name: 'TÜR', data: exam.turkce, color: 'blue' },
-                      { name: 'MAT', data: exam.matematik, color: 'green' },
-                      { name: 'FEN', data: exam.fen, color: 'purple' },
-                      { name: 'İNK', data: exam.inkilap, color: 'red' },
-                      { name: 'DİN', data: exam.din, color: 'yellow' },
-                      { name: 'İNG', data: exam.ingilizce, color: 'indigo' },
-                    ].map(({ name, data, color }) => {
-                      const net = Math.max(0, data.dogru - data.yanlis / 3);
-                      const maxQuestions = name === 'TÜR' || name === 'MAT' || name === 'FEN' ? 20 : 10;
-                      const successRate = maxQuestions > 0 ? (net / maxQuestions) * 100 : 0;
-                      
-                      return (
-                        <div key={name} className={`bg-${color}-50 rounded p-2 border border-${color}-100 text-center`}>
-                          <div className={`text-xs font-semibold text-${color}-900 mb-1`}>{name}</div>
-                          <div className={`text-lg font-bold text-${color}-700`}>
-                            {net.toFixed(1)}
-                          </div>
-                          <div className="text-[10px] text-gray-600">
-                            {data.dogru}-{data.yanlis}-{data.bos}
-                          </div>
-                          <div className={`text-[10px] text-${color}-600 font-medium`}>
-                            %{successRate.toFixed(0)}
-                          </div>
-                        </div>
-                      );
-                    })}
+          <div className="space-y-8">
+            {/* Main Metrics Grid */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {/* Branş Trendleri */}
+              <div className="bg-white rounded-xl border border-gray-200 p-6">
+                <div className="mb-6">
+                  <h3 className="text-lg font-semibold text-gray-900">Branş Trendleri (Son 20)</h3>
+                  <p className="text-sm text-gray-600">Branş Performans Trendi</p>
+                  <div className="mt-2 flex items-center gap-2">
+                    <span className="text-2xl font-bold text-blue-600">
+                      {stats.improvement >= 0 ? '+' : ''}{stats.improvement.toFixed(0)}%
+                    </span>
+                    <span className="text-sm text-green-600">
+                      {stats.improvement >= 0 ? '+' : ''}{stats.improvement.toFixed(0)}% vs Son 20 Deneme
+                    </span>
                   </div>
                 </div>
-              );
-            })}
+                
+                <div className="h-48">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={progressChartData}>
+                      <defs>
+                        <linearGradient id="colorGradient" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.3}/>
+                          <stop offset="95%" stopColor="#3b82f6" stopOpacity={0}/>
+                        </linearGradient>
+                      </defs>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                      <XAxis 
+                        dataKey="name" 
+                        axisLine={false}
+                        tickLine={false}
+                        tick={{ fontSize: 12, fill: '#64748b' }}
+                      />
+                      <YAxis 
+                        axisLine={false}
+                        tickLine={false}
+                        tick={{ fontSize: 12, fill: '#64748b' }}
+                      />
+                      <Tooltip 
+                        contentStyle={{
+                          backgroundColor: 'white',
+                          border: '1px solid #e2e8f0',
+                          borderRadius: '8px',
+                          boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)'
+                        }}
+                      />
+                      <Line 
+                        type="monotone" 
+                        dataKey="Toplam Net" 
+                        stroke="#3b82f6" 
+                        strokeWidth={3}
+                        fill="url(#colorGradient)"
+                        dot={{ fill: '#3b82f6', strokeWidth: 2, r: 4 }}
+                        activeDot={{ r: 6, stroke: '#3b82f6', strokeWidth: 2 }}
+                      />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+
+              {/* Yayın Bazlı Ortalama Puan */}
+              <div className="bg-white rounded-xl border border-gray-200 p-6">
+                <div className="mb-6">
+                  <h3 className="text-lg font-semibold text-gray-900">Yayın Bazlı Ortalama Puan</h3>
+                  <p className="text-sm text-gray-600">Anahtar yayın performansı</p>
+                  <div className="mt-2 flex items-center gap-2">
+                    <span className="text-2xl font-bold text-blue-600">{stats.avgNet.toFixed(0)}</span>
+                    <span className="text-sm text-green-600">+2% vs Tüm Denemeler</span>
+                  </div>
+                </div>
+
+                <div className="space-y-4">
+                  {publicationData.slice(0, 5).map((pub, index) => {
+                    const percentage = (pub.average / pub.maxPossible) * 100;
+                    return (
+                      <div key={pub.name} className="flex items-center justify-between">
+                        <div className="flex-1">
+                          <div className="flex items-center justify-between mb-1">
+                            <span className="text-sm font-medium text-gray-900">{pub.name}</span>
+                            <span className="text-sm text-gray-600">{pub.average.toFixed(0)}</span>
+                          </div>
+                          <div className="w-full bg-gray-200 rounded-full h-2">
+                            <div 
+                              className="bg-blue-600 h-2 rounded-full transition-all duration-300" 
+                              style={{ width: `${Math.min(100, percentage)}%` }}
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+
+            {/* Deneme Sonuçları */}
+            <div className="bg-white rounded-xl border border-gray-200 p-6">
+              <div className="flex items-center justify-between mb-6">
+                <div>
+                  <h3 className="text-lg font-semibold text-gray-900">Deneme Sonuçları</h3>
+                  <p className="text-sm text-gray-600">Sınav Sonuçları</p>
+                </div>
+                <div className="flex items-center gap-3">
+                  <select
+                    value={sortBy}
+                    onChange={(e) => setSortBy(e.target.value as 'date' | 'totalNet')}
+                    className="rounded-lg border border-gray-300 bg-white text-sm py-2 px-3"
+                  >
+                    <option value="date">Tarihe Göre</option>
+                    <option value="totalNet">Net Puana Göre</option>
+                  </select>
+                  
+                  <select
+                    value={filterPeriod}
+                    onChange={(e) => setFilterPeriod(e.target.value as 'all' | '30' | '7')}
+                    className="rounded-lg border border-gray-300 bg-white text-sm py-2 px-3"
+                  >
+                    <option value="all">Tüm Zamanlar</option>
+                    <option value="30">Son 30 Gün</option>
+                    <option value="7">Son 7 Gün</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead>
+                    <tr className="border-b border-gray-200">
+                      <th className="text-left py-3 px-4 font-medium text-gray-900">DENEME ADI</th>
+                      <th className="text-left py-3 px-4 font-medium text-gray-900">TARİH</th>
+                      <th className="text-left py-3 px-4 font-medium text-gray-900">BRANŞ</th>
+                      <th className="text-right py-3 px-4 font-medium text-gray-900">TOPLAM PUAN</th>
+                      <th className="text-right py-3 px-4 font-medium text-gray-900">NET PUAN</th>
+                      <th className="text-center py-3 px-4 font-medium text-gray-900">İŞLEMLER</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredAndSortedExams.map((exam) => {
+                      const totalNet = calculateTotalNet(exam);
+                      const examDate = exam.createdAt ? (exam.createdAt.toDate ? exam.createdAt.toDate() : new Date(exam.createdAt)) : null;
+                      
+                      return (
+                        <tr key={exam.id} className="border-b border-gray-100 hover:bg-gray-50 transition-colors">
+                          <td className="py-4 px-4">
+                            <div>
+                              <div className="font-medium text-gray-900">
+                                {exam.ad || 'Deneme Sınavı'}
+                              </div>
+                              {exam.yayin && (
+                                <div className="text-sm text-gray-600">{exam.yayin}</div>
+                              )}
+                            </div>
+                          </td>
+                          <td className="py-4 px-4 text-gray-600">
+                            {examDate ? examDate.toLocaleDateString('tr-TR') : '-'}
+                          </td>
+                          <td className="py-4 px-4">
+                            <div className="text-sm text-gray-600">Genel</div>
+                          </td>
+                          <td className="py-4 px-4 text-right">
+                            <div className="font-medium text-gray-900">
+                              {(totalNet * 4.5).toFixed(2)} {/* Approximate total score */}
+                            </div>
+                          </td>
+                          <td className="py-4 px-4 text-right">
+                            <div className="font-semibold text-blue-600">
+                              {totalNet.toFixed(2)}
+                            </div>
+                          </td>
+                          <td className="py-4 px-4">
+                            <div className="flex items-center justify-center gap-2">
+                              <button
+                                onClick={() => setEditingExam(exam)}
+                                className="p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                              >
+                                <EditIcon />
+                              </button>
+                              <button
+                                onClick={() => setConfirmDeleteId(exam.id)}
+                                className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                              >
+                                <TrashIcon />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* Isı Haritası */}
+            <div className="bg-white rounded-xl border border-gray-200 p-6">
+              <div className="mb-6">
+                <h3 className="text-lg font-semibold text-gray-900">Isı Haritası (Branş x Son 10)</h3>
+                <p className="text-sm text-gray-600">Branş Performans Isı Haritası</p>
+              </div>
+
+              <div className="overflow-x-auto">
+                <div className="min-w-[800px]">
+                  {/* Header */}
+                  <div className="grid grid-cols-11 gap-1 mb-2">
+                    <div className="text-xs font-medium text-gray-600 p-2"></div>
+                    {Array.from({ length: 10 }, (_, i) => (
+                      <div key={i} className="text-xs font-medium text-gray-600 text-center p-2">
+                        D{i + 1}
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Heat map rows */}
+                  {heatMapData.map((subject) => (
+                    <div key={subject.subject} className="grid grid-cols-11 gap-1 mb-1">
+                      <div className="text-sm font-medium text-gray-900 p-2 flex items-center">
+                        {subject.subject}
+                      </div>
+                      {subject.scores.map((score, index) => {
+                        const intensity = Math.min(100, Math.max(0, score.score));
+                        const bgColor = intensity >= 80 ? 'bg-blue-600' :
+                                       intensity >= 60 ? 'bg-blue-500' :
+                                       intensity >= 40 ? 'bg-blue-400' :
+                                       intensity >= 20 ? 'bg-blue-300' : 'bg-blue-200';
+                        
+                        return (
+                          <div
+                            key={index}
+                            className={`${bgColor} rounded p-2 text-center text-white text-xs font-medium transition-all duration-200 hover:scale-105 cursor-pointer`}
+                            title={`${subject.subject} - ${score.exam}: ${score.net} net (${intensity}%)`}
+                          >
+                            {score.net}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ))}
+
+                  {/* Legend */}
+                  <div className="flex items-center justify-end gap-2 mt-4 text-xs text-gray-600">
+                    <span>Az Doğru</span>
+                    <div className="flex gap-1">
+                      <div className="w-4 h-4 bg-blue-200 rounded"></div>
+                      <div className="w-4 h-4 bg-blue-300 rounded"></div>
+                      <div className="w-4 h-4 bg-blue-400 rounded"></div>
+                      <div className="w-4 h-4 bg-blue-500 rounded"></div>
+                      <div className="w-4 h-4 bg-blue-600 rounded"></div>
+                    </div>
+                    <span>Çok Doğru</span>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
         )}
       </main>
@@ -581,10 +560,6 @@ const ExamsPage: React.FC<ExamsPageProps> = ({ user }) => {
         onConfirm={confirmDelete}
         onCancel={() => setConfirmDeleteId(null)}
       />
-
-      <ChartModal isOpen={isChartModalOpen} onClose={() => setIsChartModalOpen(false)}>
-        {modalChart}
-      </ChartModal>
 
       {toast && (
         <Toast
