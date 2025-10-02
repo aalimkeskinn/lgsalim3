@@ -1,6 +1,9 @@
 import React, { useState, useMemo } from 'react';
 import { User } from '../types';
-import { ChartBarIcon, CalendarIcon, BookOpenIcon, FilterIcon } from './icons';
+import ChartBarIcon from './icons/ChartBarIcon';
+import CalendarIcon from './icons/CalendarIcon';
+import BookOpenIcon from './icons/BookOpenIcon';
+import FilterIcon from './icons/FilterIcon';
 
 interface ExamsPageProps {
   user: User;
