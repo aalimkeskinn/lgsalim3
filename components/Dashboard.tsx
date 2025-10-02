@@ -31,7 +31,7 @@ import BadgesBar, { type BadgeKey } from './BadgesBar';
 import ConfirmModal from './ConfirmModal';
 import MistakeModal from './MistakeModal';
 import { getCourseTopics } from '../data/topics';
-import { AreaChart, Area, PieChart, Pie, Cell, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar, ResponsiveContainer } from 'recharts';
+import { AreaChart, Area, PieChart, Pie, Cell, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar, ResponsiveContainer, CartesianGrid, XAxis, YAxis, Tooltip } from 'recharts';
 
 interface DashboardProps {
   user: User;
@@ -53,8 +53,6 @@ const Dashboard: React.FC<DashboardProps> = ({ user }) => {
   const [scope, setScope] = useState<'self' | 'school'>('school');
   // Hata Defteri modal state
   const [isMistakeOpen, setIsMistakeOpen] = useState(false);
-  const userResults = useMemo(() => results.filter(r => r.kullaniciId === user.uid), [results, user.uid]);
-
   const [mistakeResult, setMistakeResult] = useState<TestResult | null>(null);
   const [isQuickAddOpen, setIsQuickAddOpen] = useState(false);
   const [earnedBadges, setEarnedBadges] = useState<BadgeKey[]>(() => {
@@ -210,7 +208,10 @@ const Dashboard: React.FC<DashboardProps> = ({ user }) => {
     }
   };
 
-  // (moved below) userResults and scopeResults defined later alongside stats
+  // Always show user's own data for stats and charts (personalized dashboard)
+  const userResults = useMemo(() => {
+    return testResults.filter((r) => r.kullaniciId === user.uid);
+  }, [testResults, user.uid]);
 
   // Badges: first_test, five_tests, seven_day_streak
   const computedBadges = useMemo<BadgeKey[]>(() => {
@@ -281,7 +282,7 @@ const Dashboard: React.FC<DashboardProps> = ({ user }) => {
       const first = newly[0];
       setToast({ message: `Tebrikler! Yeni rozet kazandın (${first}).`, type: 'success' });
     }
-  }, [computedBadges]);
+  }, [computedBadges, earnedBadges]);
 
   useEffect(() => {
     if (earnedBadges.length === 0) return;
@@ -525,11 +526,6 @@ const Dashboard: React.FC<DashboardProps> = ({ user }) => {
     return ['all', ...Array.from(courses)];
   }, [displayResults]);
 
-  // Always show user's own data for stats and charts (personalized dashboard)
-  const userResults = useMemo(() => {
-    return testResults.filter((r) => r.kullaniciId === user.uid);
-  }, [testResults, user.uid]);
-
   // Scope-based dataset for charts (self vs school-wide)
   const scopeResults = useMemo(() => {
     return scope === 'self' ? userResults : testResults;
@@ -752,7 +748,7 @@ const Dashboard: React.FC<DashboardProps> = ({ user }) => {
                 </div>
                 <span className="text-[10px] text-gray-700">{Math.min(userDailyWeekly.weekly, weeklyTarget)}/{weeklyTarget}</span>
               </div>
-        </div>
+            </div>
             <div className="w-px h-4 bg-gray-200" />
             <BadgesBar earned={earnedBadges} showLocked={false} />
             <div className="w-px h-4 bg-gray-200" />
@@ -950,6 +946,8 @@ const Dashboard: React.FC<DashboardProps> = ({ user }) => {
               </div>
             </div>
           </div>
+        </div>
+
         {/* Course Filter */}
         {displayResults.length > 0 && courseOptions.length > 1 && (
           <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm mb-6">
@@ -966,16 +964,6 @@ const Dashboard: React.FC<DashboardProps> = ({ user }) => {
                   value={selectedCourse}
                   onChange={(v) => setSelectedCourse(v)}
                 />
-
-      <ConfirmModal
-        isOpen={!!confirmDeleteId}
-        title="Silme Onayı"
-        message="Bu test sonucunu silmek istediğinizden emin misiniz? Bu işlem geri alınamaz."
-        confirmText="Evet, sil"
-        cancelText="Vazgeç"
-        onConfirm={confirmDelete}
-        onCancel={() => setConfirmDeleteId(null)}
-      />
               </div>
               <div className="hidden sm:block h-6 w-px bg-gray-200 ml-1" />
               <div className="flex items-center gap-2 ml-auto">
@@ -1229,8 +1217,6 @@ const Dashboard: React.FC<DashboardProps> = ({ user }) => {
         </div>
         )}
 
-        
-
         {/* Empty State */}
         {displayResults.length === 0 && !isAdding && (
           <div className="bg-gradient-to-br from-blue-50 to-purple-50 rounded-xl border border-blue-200 shadow-sm p-12 text-center">
@@ -1268,6 +1254,16 @@ const Dashboard: React.FC<DashboardProps> = ({ user }) => {
         onSave={(ders, dogru, yanlis, bos, topics) => handleAddResult(ders, dogru, yanlis, bos, topics)}
         courseOptions={courseOptions}
         defaultCourse={selectedCourse}
+      />
+
+      <ConfirmModal
+        isOpen={!!confirmDeleteId}
+        title="Silme Onayı"
+        message="Bu test sonucunu silmek istediğinizden emin misiniz? Bu işlem geri alınamaz."
+        confirmText="Evet, sil"
+        cancelText="Vazgeç"
+        onConfirm={confirmDelete}
+        onCancel={() => setConfirmDeleteId(null)}
       />
 
       {/* Goals Settings Modal */}
