@@ -53,6 +53,8 @@ const Dashboard: React.FC<DashboardProps> = ({ user }) => {
   const [scope, setScope] = useState<'self' | 'school'>('school');
   // Hata Defteri modal state
   const [isMistakeOpen, setIsMistakeOpen] = useState(false);
+  const userResults = useMemo(() => results.filter(r => r.kullaniciId === user.uid), [results, user.uid]);
+
   const [mistakeResult, setMistakeResult] = useState<TestResult | null>(null);
   const [isQuickAddOpen, setIsQuickAddOpen] = useState(false);
   const [earnedBadges, setEarnedBadges] = useState<BadgeKey[]>(() => {
@@ -948,8 +950,6 @@ const Dashboard: React.FC<DashboardProps> = ({ user }) => {
               </div>
             </div>
           </div>
-        </div>
-
         {/* Course Filter */}
         {displayResults.length > 0 && courseOptions.length > 1 && (
           <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm mb-6">
